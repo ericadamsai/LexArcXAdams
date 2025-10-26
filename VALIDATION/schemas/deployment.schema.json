@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DEPLOYMENT.md schema",
+  "type": "object",
+  "required": ["title", "commands"],
+  "properties": {
+    "title": {"type": "string"},
+    "commands": {"type": "array"}
+  }
+}

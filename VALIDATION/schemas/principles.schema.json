@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PRINCIPLES.md schema",
+  "type": "object",
+  "required": ["title", "items"],
+  "properties": {
+    "title": {"type": "string"},
+    "items": {"type": "array"}
+  }
+}
