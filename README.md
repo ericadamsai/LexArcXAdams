@@ -8,6 +8,7 @@ This repository contains a minimal Python prototype demonstrating the ApexLex AR
 - Append-only signed log chain using Ed25519
 
 Files
+
 - `arc_loop.py` — main prototype (run to simulate a few loop steps)
 - `requirements.txt` — Python dependencies
 - `tests/test_projection.py` — unit test for projector
@@ -29,4 +30,5 @@ pytest -q
 ```
 
 Notes
+
 - This is a minimal educational prototype and not production-grade. It demonstrates the structure and auditable logging pattern; replace solver, belief model, and key storage with secure production components for deployment.
