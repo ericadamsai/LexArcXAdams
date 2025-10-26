@@ -1,8 +1,10 @@
+import os
 import json
 import hashlib
 import time
 from dataclasses import dataclass, asdict
 from typing import Optional, Tuple
+import concurrent.futures
 
 import numpy as np
 import cvxpy as cp
@@ -12,6 +14,33 @@ from cryptography.hazmat.primitives import serialization
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def load_private_key_from_env() -> Ed25519PrivateKey:
+    """Load Ed25519 private key from environment (hex) or from file path.
+    If not provided, generate an ephemeral key and log a clear prototype warning.
+    Environment variables supported:
+      - ARC_PRIVATE_KEY_HEX: hex-encoded private key bytes
+      - ARC_PRIVATE_KEY_PATH: path to a raw private key file (bytes)
+    """
+    hexenv = os.getenv("ARC_PRIVATE_KEY_HEX")
+    pathenv = os.getenv("ARC_PRIVATE_KEY_PATH")
+    if hexenv:
+        try:
+            raw = bytes.fromhex(hexenv)
+            return Ed25519PrivateKey.from_private_bytes(raw)
+        except Exception:
+            print("[WARN] ARC_PRIVATE_KEY_HEX provided but invalid hex; generating ephemeral key.")
+    if pathenv and os.path.exists(pathenv):
+        try:
+            with open(pathenv, "rb") as f:
+                raw = f.read()
+            return Ed25519PrivateKey.from_private_bytes(raw)
+        except Exception:
+            print(f"[WARN] ARC_PRIVATE_KEY_PATH={pathenv} unreadable; generating ephemeral key.")
+    # fallback: ephemeral key (prototype only)
+    print("[PROTOTYPE WARNING] No persistent signing key found. Using ephemeral in-memory key. Replace with HSM/KMS for production.")
+    return Ed25519PrivateKey.generate()
 
 
 @dataclass
@@ -125,9 +154,32 @@ def minimize_lagrangian_stub(b: ToyBelief, a0: np.ndarray, u0: np.ndarray) -> Tu
     return u.value, {"status": "ok", "cost": float(prob.value)}
 
 
+def pi_safe(b: ToyBelief) -> np.ndarray:
+    """Simple safe fallback policy: return zero control clipped to safe bounds.
+    Replace with certified safe policy in production.
+    """
+    return np.zeros_like(b.mean)
+
+
+def run_minimize_with_timeout(b, a0, u0, timeout_s=0.5):
+    """Run minimize_lagrangian_stub with a timeout; return fallback if it times out or fails."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(minimize_lagrangian_stub, b, a0, u0)
+        try:
+            res = future.result(timeout=timeout_s)
+            return res
+        except concurrent.futures.TimeoutError:
+            # timeout: use safe fallback
+            print(f"[WARN] Solver timeout after {timeout_s}s — using fallback policy")
+            return pi_safe(b), {"status": "timeout_fallback"}
+        except Exception as e:
+            print(f"[ERROR] Solver exception: {e}; using fallback")
+            return pi_safe(b), {"status": "exception_fallback"}
+
+
 def main(steps: int = 5):
-    # key (in-memory) — in production use HSM/KMS
-    priv = Ed25519PrivateKey.generate()
+    # load signing key (prefer persistent key via env/path). Ephemeral key only for prototype.
+    priv = load_private_key_from_env()
     slog = SignedLog(priv)
 
     # initial belief
@@ -152,8 +204,9 @@ def main(steps: int = 5):
         a0 = -0.1 * b.mean
         u0 = a0.copy()
 
-        # 6) minimize L (stub)
-        u_candidate, solver_meta = minimize_lagrangian_stub(b, a0, u0)
+        # 6) minimize L (stub) — run with timeout and fallback
+        timeout_s = float(os.getenv("ARC_SOLVER_TIMEOUT", "0.5"))
+        u_candidate, solver_meta = run_minimize_with_timeout(b, a0, u0, timeout_s=timeout_s)
 
         # 7) safety projector
         u_safe, proj_meta = safety_project(x_hat, u_candidate)
